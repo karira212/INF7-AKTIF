@@ -61,12 +61,17 @@
                 </div>
             </div>
 
-            <!-- Controls: SQLite Badge & Audio Toggle -->
+            <!-- Controls: Lockdown Mode, SQLite Badge & Audio Toggle -->
             <div class="flex items-center gap-2 sm:gap-3">
-                <div id="db-status-badge" class="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200" title="Database SQLite aktif di browser">
+                <div id="db-status-badge" class="hidden md:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200" title="Database SQLite aktif di browser">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                     <span>SQLite Aktif</span>
                 </div>
+
+                <button id="btn-lockdown-toggle" onclick="handleLockdownButton()" class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm transition active:scale-95 shadow-sm" title="Aktifkan Layar Penuh Terkunci">
+                    <span id="lock-icon">🔒</span>
+                    <span id="lock-label">Layar Penuh</span>
+                </button>
 
                 <button id="btn-sound-toggle" onclick="toggleSound()" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold text-sm transition active:scale-95 border border-amber-300 shadow-sm" title="Aktifkan/Matikan Efek Suara">
                     <span id="sound-icon" class="text-lg">🔊</span>
@@ -634,6 +639,52 @@
             <button onclick="closeHardwareModal()" class="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition">
                 Mengerti!
             </button>
+        </div>
+    </div>
+
+    <!-- MODAL GATEKEEPER: MASUK LAYAR PENUH TERKUNCI / BUKA KUNCI PASSWORD -->
+    <div id="lockdown-overlay" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 text-center">
+            <div id="lock-modal-icon" class="w-16 h-16 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center text-3xl mx-auto shadow-inner">
+                🖥️
+            </div>
+            <div class="space-y-2">
+                <span id="lock-modal-badge" class="text-xs font-extrabold uppercase tracking-wider px-3 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    Mode Pembelajaran Terfokus
+                </span>
+                <h3 id="lock-modal-title" class="font-display text-2xl font-bold text-slate-900">
+                    Mulai Layar Penuh
+                </h3>
+                <p id="lock-modal-desc" class="text-sm text-slate-600 leading-relaxed">
+                    Aplikasi akan ditampilkan secara penuh di browser. Siswa <strong>tidak dapat keluar</strong> sebelum menyelesaikan kuis atau tanpa izin pengawas.
+                </p>
+            </div>
+
+            <!-- Action Button to Enter Fullscreen -->
+            <div id="lock-enter-box" class="space-y-3 pt-1">
+                <button onclick="activateLockdownFullscreen()" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm sm:text-base shadow-lg transition active:scale-95">
+                    🚀 Masuk Layar Penuh & Mulai Belajar
+                </button>
+            </div>
+
+            <!-- Supervisor Password Unlock Form (Shown if user tries to exit early) -->
+            <div id="lock-password-box" class="hidden space-y-3 pt-2 border-t border-slate-200 text-left">
+                <label class="block text-xs font-bold text-rose-700 uppercase tracking-wide">
+                    🔑 Password Pengawas / Guru untuk Keluar:
+                </label>
+                <input type="password" id="unlock-password-input" onkeydown="if(event.key==='Enter') verifyUnlockPassword()" placeholder="Masukkan password pengawas..." class="w-full px-4 py-3 rounded-xl border-2 border-slate-300 text-sm font-mono focus:outline-none focus:border-rose-500">
+                <p id="unlock-error-msg" class="hidden text-xs font-bold text-rose-600">
+                    ❌ Password salah! Silakan lanjutkan pembelajaran atau minta izin guru.
+                </p>
+                <div class="grid grid-cols-2 gap-2.5 pt-1">
+                    <button onclick="activateLockdownFullscreen()" class="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm transition">
+                        ↩ Kembali Penuh
+                    </button>
+                    <button onclick="verifyUnlockPassword()" class="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm transition">
+                        🔓 Buka Kunci
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1551,6 +1602,9 @@
 
             insertSqliteRecord(studentName, kelasInput, finalScore);
             playSuccessSound();
+
+            // Tandai sesi belajar & kuis sudah selesai sehingga kunci otomatis terbuka
+            completeLearningSession();
         }
 
         function restartQuiz() {
@@ -1562,7 +1616,120 @@
         }
 
         // =========================================================================
-        // 7. GLOBAL CLICK SOUND LISTENER & APP INITIALIZATION
+        // 7. FULLSCREEN & LOCKDOWN SECURITY GATEKEEPER
+        // =========================================================================
+        const SUPERVISOR_PASSWORD = "SERTIFIKASI_TDK_CAIR";
+        let isLockdownActive = true;
+        let isSessionCompleted = false;
+
+        function activateLockdownFullscreen() {
+            initAudioContext();
+            playClickSound();
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(() => {});
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) {
+                elem.msRequestFullscreen();
+            }
+            document.getElementById('lockdown-overlay').classList.add('hidden');
+            updateLockdownHeaderBadge();
+        }
+
+        function showUnlockModal(reasonText) {
+            if (!isLockdownActive || isSessionCompleted) return;
+            const overlay = document.getElementById('lockdown-overlay');
+            document.getElementById('lock-modal-icon').textContent = '🔒';
+            document.getElementById('lock-modal-icon').className = 'w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-3xl mx-auto shadow-inner';
+            document.getElementById('lock-modal-badge').textContent = 'Akses Keluar Terkunci';
+            document.getElementById('lock-modal-badge').className = 'text-xs font-extrabold uppercase tracking-wider px-3 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200';
+            document.getElementById('lock-modal-title').textContent = 'Sesi Belum Selesai!';
+            document.getElementById('lock-modal-desc').textContent = reasonText || 'Kamu belum menyelesaikan kuis evaluasi. Silakan kembali ke layar penuh atau masukkan password pengawas untuk keluar.';
+
+            document.getElementById('lock-enter-box').classList.add('hidden');
+            document.getElementById('lock-password-box').classList.remove('hidden');
+            document.getElementById('unlock-error-msg').classList.add('hidden');
+            document.getElementById('unlock-password-input').value = '';
+
+            overlay.classList.remove('hidden');
+            setTimeout(() => document.getElementById('unlock-password-input').focus(), 100);
+        }
+
+        function verifyUnlockPassword() {
+            const inputVal = document.getElementById('unlock-password-input').value.trim();
+            const errEl = document.getElementById('unlock-error-msg');
+            if (inputVal === SUPERVISOR_PASSWORD) {
+                isLockdownActive = false;
+                playSuccessSound();
+                document.getElementById('lockdown-overlay').classList.add('hidden');
+                if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                }
+                updateLockdownHeaderBadge();
+            } else {
+                playErrorSound();
+                errEl.classList.remove('hidden');
+                document.getElementById('unlock-password-input').value = '';
+                document.getElementById('unlock-password-input').focus();
+            }
+        }
+
+        function handleLockdownButton() {
+            if (!isLockdownActive || isSessionCompleted) {
+                // Jika tidak terkunci, tombol berfungsi sebagai toggle layar penuh biasa
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                } else {
+                    document.exitFullscreen().catch(() => {});
+                }
+            } else {
+                showUnlockModal('Aplikasi sedang dalam mode terkunci sampai kuis selesai. Masukkan password pengawas untuk membuka kunci.');
+            }
+        }
+
+        function completeLearningSession() {
+            isSessionCompleted = true;
+            isLockdownActive = false;
+            document.getElementById('lockdown-overlay').classList.add('hidden');
+            updateLockdownHeaderBadge();
+        }
+
+        function updateLockdownHeaderBadge() {
+            const btn = document.getElementById('btn-lockdown-toggle');
+            const icon = document.getElementById('lock-icon');
+            const label = document.getElementById('lock-label');
+            if (!btn) return;
+
+            if (isLockdownActive && !isSessionCompleted) {
+                btn.className = 'flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm transition active:scale-95 shadow-sm';
+                icon.textContent = '🔒';
+                label.textContent = 'Terkunci';
+            } else {
+                btn.className = 'flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition active:scale-95 shadow-sm';
+                icon.textContent = '🔓';
+                label.textContent = 'Bebas Keluar';
+            }
+        }
+
+        // Deteksi jika siswa menekan ESC atau keluar dari mode fullscreen sebelum selesai
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement && isLockdownActive && !isSessionCompleted) {
+                playErrorSound();
+                showUnlockModal('Kamu keluar dari layar penuh! Klik "Kembali Penuh" untuk melanjutkan atau masukkan password pengawas.');
+            }
+        });
+
+        // Peringatan browser jika mencoba menutup tab/refresh sebelum selesai atau tanpa password
+        window.addEventListener('beforeunload', (e) => {
+            if (isLockdownActive && !isSessionCompleted) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // =========================================================================
+        // 8. GLOBAL CLICK SOUND LISTENER & APP INITIALIZATION
         // =========================================================================
         document.addEventListener('click', (e) => {
             const btn = e.target.closest('button');
@@ -1576,6 +1743,7 @@
             selectScenario(0);
             renderQuizQuestion();
             initSqliteDatabase();
+            updateLockdownHeaderBadge();
         });
     </script>
 </body>
